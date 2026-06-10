@@ -3,7 +3,6 @@ android/.gradle/
 android/build/
 android/app/build/
 android/.idea/
-*.apk
 *.ap_
 *.dex
 
@@ -13,3 +12,4 @@ android/local.properties
 # OS files
 .DS_Store
 Thumbs.db
+
