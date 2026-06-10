@@ -277,7 +277,7 @@ private fun startScreenRecord(
         }
         context.startForegroundService(intent)
         ScreenRecordService.setOnRecordingComplete { path ->
-            val msg = if (path != null) "录制已保存" else "录制失败"
+            val msg = if (path != null) "录制已保存到 $path" else "录制失败"
             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
         }
         onStarted(true)

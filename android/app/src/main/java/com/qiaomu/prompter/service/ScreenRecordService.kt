@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
@@ -12,8 +13,9 @@ import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
-import android.os.ParcelFileDescriptor
+import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.text.SimpleDateFormat
@@ -50,6 +52,7 @@ class ScreenRecordService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var mediaRecorder: MediaRecorder? = null
     private var startTime: Long = 0
+    private var tempFile: File? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -62,10 +65,9 @@ class ScreenRecordService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
+                @Suppress("DEPRECATION")
                 val data = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                if (data != null) {
-                    startRecording(resultCode, data)
-                }
+                if (data != null) startRecording(resultCode, data)
             }
             ACTION_STOP -> stopRecording()
         }
@@ -76,11 +78,8 @@ class ScreenRecordService : Service() {
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = manager.getMediaProjection(resultCode, data)
 
-        val outputDir = File(getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "Recordings")
-        outputDir.mkdirs()
         val fileName = "QM_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.CHINA).format(Date())}.mp4"
-        val outputFile = File(outputDir, fileName)
-        _outputPath = outputFile.absolutePath
+        tempFile = File(cacheDir, fileName)
 
         mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(this)
@@ -93,7 +92,7 @@ class ScreenRecordService : Service() {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setVideoSource(MediaRecorder.VideoSource.SURFACE)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setOutputFile(outputFile.absolutePath)
+            setOutputFile(tempFile!!.absolutePath)
             setVideoSize(1080, 1920)
             setVideoEncoder(MediaRecorder.VideoEncoder.H264)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
@@ -123,10 +122,7 @@ class ScreenRecordService : Service() {
         _durationSeconds = ((System.currentTimeMillis() - startTime) / 1000).toInt()
         _isRecording = false
 
-        try {
-            mediaRecorder?.stop()
-        } catch (_: Exception) {}
-
+        try { mediaRecorder?.stop() } catch (_: Exception) {}
         mediaRecorder?.release()
         mediaRecorder = null
         virtualDisplay?.release()
@@ -134,11 +130,35 @@ class ScreenRecordService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
 
-        onRecordingComplete?.invoke(_outputPath)
+        val savedPath = saveToMediaStore()
+        onRecordingComplete?.invoke(savedPath)
         onRecordingComplete = null
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun saveToMediaStore(): String? {
+        val source = tempFile ?: return null
+        if (!source.exists()) return null
+        try {
+            val fileName = source.name
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/QMPrompter")
+            }
+            val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+            contentResolver.openFileDescriptor(uri, "rw")?.use { pfd ->
+                java.io.FileOutputStream(pfd.fileDescriptor).use { fos ->
+                    source.inputStream().use { fis -> fis.copyTo(fos) }
+                }
+            }
+            source.delete()
+            return "Movies/QMPrompter/$fileName"
+        } catch (_: Exception) {
+            return null
+        }
     }
 
     private fun buildNotification(text: String): Notification {
@@ -152,13 +172,8 @@ class ScreenRecordService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "屏幕录制",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "屏幕录制", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 }

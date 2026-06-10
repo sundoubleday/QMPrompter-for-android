@@ -11,7 +11,7 @@
 - 手动匀速滚动，点击屏幕播放/暂停。
 - 左侧上下滑动调速度，右侧上下滑动调进度。
 - 字号、速度、文字颜色、背景透明度设置。
-- **屏幕内录**：录制提词过程（含麦克风音频），保存为 MP4。
+- **屏幕内录**：录制提词过程（含麦克风音频），保存为 MP4 到手机 Movies/QMPrompter 目录。
 - AI 生成口播稿（DeepSeek API）。
 - 语音输入文稿。
 - 玻璃质感 UI。
@@ -22,27 +22,20 @@
 
 前往 [Releases](https://github.com/sundoubleday/QMPrompter-for-android/releases) 下载最新 APK，传输到手机安装即可。
 
-> 首次安装需要在手机「设置 → 安全」中允许安装未知来源应用。支持 Android 8.0+。
+> 首次安装需要在手机「设置 → 安全」中允许安装未知来源应用。首次打开 App 会请求摄像头和麦克风权限。支持 Android 10+。
 
 ### iOS
 
-见下方「iOS 工程配置」章节，需要通过 Xcode 构建安装。
+需要通过 Xcode 构建安装，见下方「iOS 工程配置」。
 
 ## Android 工程
 
 - 项目目录：`android/`
 - 语言：Kotlin + Jetpack Compose
-- 最低版本：Android 8.0（API 26）
+- 最低版本：Android 10（API 29）
 - 目标版本：Android 14（API 36）
-- 构建：`./gradlew assembleDebug`
+- 构建：`cd android && ./gradlew assembleDebug`
 - APK 输出：`android/app/build/outputs/apk/debug/app-debug.apk`
-
-### 从源码构建
-
-```bash
-cd android
-./gradlew assembleDebug
-```
 
 ### 用 Android Studio 打开
 
@@ -51,16 +44,15 @@ cd android
 3. 等待 Gradle sync 完成。
 4. 连接手机，点击 Run（▶）。
 
-### 屏幕录制权限
+### 屏幕录制
 
-首次使用录制功能时，系统会弹出屏幕录制授权弹窗，点击「立即开始」即可。录制需要麦克风权限。
+首次使用录制功能时，系统会弹出屏幕录制授权弹窗，点击「立即开始」即可。录制完成后视频自动保存到手机 **Movies/QMPrompter** 目录，可通过文件管理器查看。
 
 ## iOS 工程配置
 
 - Xcode project: `QMPrompter.xcodeproj`
 - Target: `QMPrompter`
 - Bundle ID: `com.qiaomu.Prompter`
-- Team ID: `58PYLV965G` (Personal Team)
 - iOS deployment target: `17.0`
 
 ### iOS 真机测试
@@ -70,10 +62,6 @@ cd android
 3. 连接 iPhone，选择 `QMPrompter` scheme 和真机。
 4. 在 target 的 Signing & Capabilities 确认 Team 可用。
 5. 点击 Run。
-
-### iOS 签名说明
-
-- Personal Team 安装包通常 7 天后需要重新构建/安装。
 
 ## 技术栈对照
 
@@ -88,6 +76,21 @@ cd android
 | 网络请求 | URLSession | OkHttp |
 | 序列化 | Codable | kotlinx.serialization |
 | 屏幕录制 | — | MediaProjection + MediaRecorder |
+
+## 更新日志
+
+### v1.1.0 (Android)
+
+- minSdk 升级到 29（Android 10+）。
+- 启动时自动请求摄像头和麦克风权限。
+- 录制视频保存到公共目录 Movies/QMPrompter（可通过文件管理器查看）。
+- 录制完成后 Toast 提示保存路径。
+
+### v1.0.0 (Android)
+
+- 首个 Android 版本，完整移植 iOS 功能。
+- Jetpack Compose UI，摄像头背景，自动滚动，语音跟随。
+- 屏幕内录，AI 生成口播稿。
 
 ## License
 
