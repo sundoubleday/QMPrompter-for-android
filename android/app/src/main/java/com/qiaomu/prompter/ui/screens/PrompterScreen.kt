@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -100,7 +99,7 @@ fun PrompterScreen(
 
     val engine = remember { ScrollEngine(scope) }
     val speechFollower = remember { SpeechFollower(context) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(true) }
     var cameraPermission by remember { mutableStateOf(checkCameraPermission(context)) }
     var isRecording by remember { mutableStateOf(ScreenRecordService.isRecording) }
     var recordDuration by remember { mutableStateOf(0) }
@@ -111,7 +110,7 @@ fun PrompterScreen(
     val lineHeight = script.fontSize * 1.34f
     val contentHeight = promptLines.sumOf { estimatedRowHeight(it.text, script.fontSize).toDouble() }.toFloat()
     val topPaddingFraction = 0.40f
-    val bottomPaddingFraction = if (showSettings) 0.40f else 0.34f
+    val bottomPaddingFraction = if (showSettings) 0.40f else 0.25f
 
     val engineOffset by engine.offset.collectAsState()
     val enginePlaying by engine.isPlaying.collectAsState()
@@ -122,19 +121,26 @@ fun PrompterScreen(
     val totalHeight = contentHeight + topPaddingFraction * contentHeight + bottomPaddingFraction * contentHeight
     val maxOffset = (totalHeight - contentHeight).coerceAtLeast(0f)
 
-    val initialProgress = script.scrollSpeed / 260f
-    LaunchedEffect(Unit) { engine.setSpeed(script.scrollSpeed) }
+    // 关键修复：配置 ScrollEngine
+    LaunchedEffect(script.fontSize, script.scrollSpeed, maxOffset) {
+        engine.configure(
+            speed = script.scrollSpeed,
+            lineHeight = lineHeight,
+            averageCharactersPerLine = targetCharactersForLine(script.fontSize).toFloat(),
+            maximumOffset = maxOffset
+        )
+    }
 
     DisposableEffect(Unit) {
         onDispose {
             speechFollower.stop()
-            // engine cleanup handled by DisposableEffect
+            engine.pause()
         }
     }
 
     LaunchedEffect(speechProgress) {
-        if (speechState == SpeechFollowerState.LISTENING && speechProgress > 0) {
-            engine.setOffset((speechProgress * maxOffset).toFloat().coerceIn(0f, maxOffset))
+        if (speechState == SpeechFollowerState.LISTENING && speechProgress > 0 && maxOffset > 0) {
+            engine.follow((speechProgress * maxOffset).toFloat().coerceIn(0f, maxOffset))
         }
     }
 
@@ -154,10 +160,7 @@ fun PrompterScreen(
         }
 
         // 半透明遮罩
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color.Black.copy(alpha = script.overlayOpacity))
-        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = script.overlayOpacity)))
 
         // 提词文字层
         TextScrollLayer(
@@ -167,13 +170,11 @@ fun PrompterScreen(
             textColor = script.textColorPreset.color,
             engineOffset = engineOffset,
             topPaddingFraction = topPaddingFraction,
-            showSettings = showSettings,
             speechState = speechState,
-            speechProgress = speechProgress,
-            lineHeightDp = script.fontSize * 1.34f
+            speechProgress = speechProgress
         )
 
-        // 手势交互层
+        // 手势交互层 — 始终存在
         InteractionLayer(
             onTap = { showSettings = !showSettings },
             onSpeedDrag = { delta ->
@@ -181,58 +182,45 @@ fun PrompterScreen(
                 engine.setSpeed(newSpeed)
             },
             onProgressDrag = { delta ->
-                val newOffset = (engineOffset - delta * 1.5f).coerceIn(0f, maxOffset)
-                engine.setOffset(newOffset)
+                if (maxOffset > 0) {
+                    val newOffset = (engineOffset - delta * 1.5f).coerceIn(0f, maxOffset)
+                    engine.setOffset(newOffset)
+                }
             }
         )
 
-        // 顶部工具栏
-        AnimatedVisibility(
-            visible = showSettings,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
-        ) {
-            TopBar(
-                onClose = onClose,
-                onToggleSettings = { showSettings = false },
-                showSettings = true,
-                modeText = speechFollower.statusText,
-                onModeToggle = {
-                    if (speechState != SpeechFollowerState.IDLE) {
-                        speechFollower.stop()
-                    } else {
-                        val progress = if (maxOffset > 0) engineOffset / maxOffset else 0.0
-                        speechFollower.start(script.content, progress.toDouble())
-                    }
-                },
-                isRecording = isRecording,
-                onRecordToggle = {
-                    if (isRecording) {
-                        stopScreenRecord(context)
-                        isRecording = false
-                    } else {
-                        startScreenRecord(context, requestScreenRecord) { started ->
-                            if (started) {
-                                isRecording = true
-                                recordDuration = 0
-                            }
+        // 顶部工具栏 — 始终显示
+        TopBar(
+            onClose = onClose,
+            onToggleSettings = { showSettings = !showSettings },
+            showSettings = showSettings,
+            modeText = speechFollower.statusText,
+            onModeToggle = {
+                if (speechState != SpeechFollowerState.IDLE) {
+                    speechFollower.stop()
+                } else {
+                    val progress = if (maxOffset > 0) engineOffset / maxOffset else 0.0
+                    speechFollower.start(script.content, progress.toDouble())
+                }
+            },
+            isRecording = isRecording,
+            onRecordToggle = {
+                if (isRecording) {
+                    stopScreenRecord(context)
+                    isRecording = false
+                } else {
+                    startScreenRecord(context, requestScreenRecord) { started ->
+                        if (started) {
+                            isRecording = true
+                            recordDuration = 0
                         }
                     }
-                },
-                recordDuration = recordDuration
-            )
-        }
+                }
+            },
+            recordDuration = recordDuration
+        )
 
-        // 录制指示器（录制中始终显示）
-        if (isRecording && !showSettings) {
-            RecordIndicator(
-                recordDuration = recordDuration,
-                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)
-            )
-        }
-
-        // 底部控制面板
+        // 底部控制面板 — 可收起
         AnimatedVisibility(
             visible = showSettings,
             enter = fadeIn(),
@@ -250,6 +238,28 @@ fun PrompterScreen(
                 isPlaying = enginePlaying
             )
         }
+
+        // 底部播放/暂停按钮 — 设置面板收起时显示
+        AnimatedVisibility(
+            visible = !showSettings,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+        ) {
+            GlassCircleButton {
+                IconButton(
+                    onClick = { engine.toggle() },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(
+                        if (enginePlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        if (enginePlaying) "暂停" else "播放",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -260,15 +270,11 @@ private fun startScreenRecord(
     requestScreenRecord: ((Int, Intent) -> Unit) -> Unit,
     onStarted: (Boolean) -> Unit
 ) {
-    // 检查音频权限
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
-        != PackageManager.PERMISSION_GRANTED
-    ) {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
         Toast.makeText(context, "需要麦克风权限才能录制", Toast.LENGTH_SHORT).show()
         onStarted(false)
         return
     }
-
     requestScreenRecord { resultCode, data ->
         val intent = Intent(context, ScreenRecordService::class.java).apply {
             action = ScreenRecordService.ACTION_START
@@ -277,8 +283,8 @@ private fun startScreenRecord(
         }
         context.startForegroundService(intent)
         ScreenRecordService.setOnRecordingComplete { path ->
-            val msg = if (path != null) "录制已保存到 $path" else "录制失败"
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            val msg = if (path != null) "已保存到 $path" else "录制失败"
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         }
         onStarted(true)
     }
@@ -294,25 +300,12 @@ private fun stopScreenRecord(context: Context) {
 @Composable
 private fun RecordIndicator(recordDuration: Int, modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color.Red.copy(alpha = 0.3f))
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = modifier.clip(RoundedCornerShape(20.dp)).background(Color.Red.copy(alpha = 0.3f)).padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Icon(
-            Icons.Default.FiberManualRecord,
-            contentDescription = null,
-            tint = Color.Red,
-            modifier = Modifier.size(10.dp)
-        )
-        Text(
-            formatDuration(recordDuration),
-            color = Color.White,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-        )
+        Icon(Icons.Default.FiberManualRecord, null, tint = Color.Red, modifier = Modifier.size(10.dp))
+        Text(formatDuration(recordDuration), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -336,13 +329,10 @@ private fun CameraBackground(lifecycleOwner: androidx.lifecycle.LifecycleOwner) 
                 )
                 scaleType = PreviewView.ScaleType.FILL_CENTER
             }
-
             val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
             cameraProviderFuture.addListener({
                 val cameraProvider = cameraProviderFuture.get()
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
-                }
+                val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
                 try {
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview)
@@ -364,10 +354,8 @@ private fun TextScrollLayer(
     textColor: Color,
     engineOffset: Float,
     topPaddingFraction: Float,
-    showSettings: Boolean,
     speechState: SpeechFollowerState,
-    speechProgress: Double,
-    lineHeightDp: Float
+    speechProgress: Double
 ) {
     val scrollState = rememberScrollState()
     val speechLineIdx = if (speechState == SpeechFollowerState.LISTENING)
@@ -382,31 +370,26 @@ private fun TextScrollLayer(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState, enabled = false)
-            .padding(top = (topPaddingFraction * lineHeight * promptLines.size).dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(scrollState, enabled = false),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // 顶部留白
         Spacer(Modifier.height((topPaddingFraction * lineHeight * promptLines.size).dp))
+
         promptLines.forEachIndexed { i, line ->
-            val isSpeechHighlight = speechState == SpeechFollowerState.LISTENING && i == speechLineIdx && line.text.any { it.isLetter() || it.isDigit() }
+            val isHighlight = speechState == SpeechFollowerState.LISTENING && i == speechLineIdx && line.text.any { it.isLetter() || it.isDigit() }
             Text(
                 text = line.text,
-                color = if (isSpeechHighlight) Color(0xFF4FC3F7) else textColor,
+                color = if (isHighlight) Color(0xFF4FC3F7) else textColor,
                 fontSize = fontSize.sp,
                 lineHeight = lineHeight.sp,
-                fontWeight = if (isSpeechHighlight) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (isHighlight) FontWeight.Bold else FontWeight.Normal,
                 textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .padding(vertical = (lineHeight * 0.12f).dp)
-                    .then(
-                        if (isSpeechHighlight) Modifier.background(Color.White.copy(0.08f), RoundedCornerShape(6.dp))
-                        else Modifier
-                    )
+                modifier = Modifier.fillMaxWidth(0.88f).padding(vertical = (lineHeight * 0.12f).dp)
             )
         }
+
+        // 底部留白
         Spacer(Modifier.height(400.dp))
     }
 }
@@ -427,7 +410,7 @@ private fun InteractionLayer(onTap: () -> Unit, onSpeedDrag: (Float) -> Unit, on
     }
 }
 
-// === 顶栏 ===
+// === 顶栏 — 始终显示 ===
 
 @Composable
 private fun TopBar(
@@ -451,14 +434,9 @@ private fun TopBar(
         }
         Spacer(Modifier.weight(1f))
 
-        // 录制按钮
-        GlassCircleButton(
-            modifier = Modifier.size(44.dp)
-        ) {
-            IconButton(
-                onClick = onRecordToggle,
-                modifier = Modifier.size(40.dp)
-            ) {
+        // 录制按钮 — 始终可见
+        GlassCircleButton(modifier = Modifier.size(44.dp)) {
+            IconButton(onClick = onRecordToggle, modifier = Modifier.size(40.dp)) {
                 if (isRecording) {
                     Icon(Icons.Default.Stop, "停止录制", tint = Color.Red, modifier = Modifier.size(20.dp))
                 } else {
@@ -474,6 +452,7 @@ private fun TopBar(
 
         Spacer(Modifier.weight(1f))
 
+        // 语音跟随
         TextButton(
             onClick = onModeToggle,
             modifier = Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(0.15f))
@@ -481,8 +460,9 @@ private fun TopBar(
             Text(modeText, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
 
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(6.dp))
 
+        // 设置面板切换
         GlassCircleButton {
             IconButton(onClick = onToggleSettings, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Default.Settings, "设置", tint = Color.White)
