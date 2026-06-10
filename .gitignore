@@ -1,9 +1,15 @@
+# Android build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+*.apk
+*.ap_
+*.dex
+
+# Local config
+android/local.properties
+
+# OS files
 .DS_Store
-DerivedData/
-build/
-screenshots/
-*.xcuserstate
-xcuserdata/
-*.moved-aside
-*.xcscmblueprint
-*.xccheckout
+Thumbs.db
